@@ -1,4 +1,7 @@
-export class HttpRequest {
-    type = "http";
-    request: any;
-}
+import z from "zod";
+
+
+export const HttpRequest = z.object({
+    type: z.string("http").readonly(),
+    request: z.string()
+})
