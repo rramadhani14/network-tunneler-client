@@ -9,16 +9,16 @@ export const JsonRpcRequest = z.object({
 
 export const JsonRpcSuccessResponse = z.object({
     jsonrpc: z.string("2.0").readonly(),
-    result: z.object(),
-    id: z.object()
+    result: z.any().optional(),
+    id: z.string()
 });
 
 export const JsonRpcErrrorResponse = z.object({
     jsonrpc: z.string("2.0").readonly(),
     error: z.object({
-        code: z.string(),
+        code: z.number(),
         message: z.string().optional(),
-        data: z.string().optional()
+        data: z.any().optional()
     }),
     id: z.string()
 })
