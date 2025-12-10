@@ -1,13 +1,9 @@
 import { program } from "commander";
-import {
-  JsonRpcErrrorResponse,
-  JsonRpcRequest,
-  JsonRpcSuccessResponse,
-} from "./model/jsonrpc";
-import { Config } from "./model/config";
+import { JsonRpcRequest } from "./model/jsonrpc";
 import { handleHttp } from "./handler/httpHandler";
 import { handleConfig } from "./handler/configHandler";
 import { handleMethodNotFound } from "./handler/methodNotFoundHandler";
+import { EventEmitter } from "node:events";
 
 async function start() {
   program
@@ -35,11 +31,23 @@ async function start() {
     .option("--unsecure", "Disable TLS", false);
 
   program.parse();
-  await retryable(listen, 3, 3000)();
+  const eventEmitter = new EventEmitter();
+  let retryAllowed = false;
+  eventEmitter.addListener("succeed", () => {
+    retryAllowed = true;
+  })
+  eventEmitter.addListener("reconnect", async () => {
+    if(retryAllowed) {
+        retryAllowed = false;
+        await retryable(listen, 3, 5000)(eventEmitter);
+    }
+  })
+  await retryable(listen, 3, 3000)(eventEmitter);
+  console.log("Succeed");
 }
 
 function retryable(func: Function, time: number, delayInMs: number) {
-  return async () => {
+  return async (...args: any) => {
     let counter = 0;
     while (counter < time) {
       console.log(counter);
@@ -47,7 +55,7 @@ function retryable(func: Function, time: number, delayInMs: number) {
         if (counter >= 0) {
           console.log("retrying...");
         }
-        const result = await func();
+        const result = await func(...args);
         if (result != null || counter >= time) {
           return result;
         }
@@ -66,8 +74,8 @@ function retryable(func: Function, time: number, delayInMs: number) {
   };
 }
 
-function listen(): Promise<WebSocket> {
-  return new Promise((resolve, reject) => {
+function listen(eventEmitter: EventEmitter): Promise<WebSocket> {
+  function func(resolve: any, reject: any) {
     const { serverHost, serverPort, path, unsecure } = program.opts();
     const protocol = unsecure ? "ws" : "wss";
     let socket = new WebSocket(
@@ -79,6 +87,10 @@ function listen(): Promise<WebSocket> {
 
     socket.addEventListener("open", (event) => {
       console.log("opened");
+      if (eventEmitter != null) {
+        console.log("reconnecting...");
+        eventEmitter.emit("succeed");
+      }
       socket.addEventListener("message", (event) => {
         const payload = JsonRpcRequest.parse(JSON.parse(event.data));
         const { id, method, params } = payload;
@@ -92,14 +104,24 @@ function listen(): Promise<WebSocket> {
       console.log("closed");
       clearInterval(ping);
       reject();
+      if (eventEmitter != null) {
+        console.log("reconnecting...");
+        eventEmitter.emit("reconnect");
+      }
     });
 
     socket.addEventListener("error", (event) => {
       console.log("error", event);
       clearInterval(ping);
       reject();
+      if (eventEmitter != null) {
+        console.log("reconnecting...");
+        eventEmitter.emit("reconnect");
+      }
     });
-  });
+  }
+
+  return new Promise(func);
 }
 
 function handleMethod(
